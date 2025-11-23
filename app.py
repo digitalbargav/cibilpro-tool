@@ -4,41 +4,52 @@ import pdfplumber
 from datetime import datetime
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="CibilPro Analyzer", layout="wide")
+st.set_page_config(page_title="CibilPro V3.0", layout="wide")
 
-# --- HIDE STREAMLIT BRANDING ---
+# --- CSS TO FIX LAYOUT & DOWNLOADS ---
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
+    /* Make the entire app scrollable */
+    .main {
+        overflow: visible;
+    }
+    /* Style the download button to be green and big */
     .stDownloadButton button {
-        width: 100%;
-        background-color: #007bff;
+        background-color: #28a745; 
         color: white;
+        width: 100%;
+        padding: 15px;
+        font-weight: bold;
+        border: none;
         border-radius: 8px;
-        padding: 10px;
+    }
+    .stDownloadButton button:hover {
+        background-color: #218838;
+        color: white;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- API SETUP ---
+# --- API CHECK ---
 api_key = st.secrets.get("GEMINI_KEY")
 if not api_key:
-    st.error("⚠️ System Error: API Key missing. Please set it in Streamlit Secrets.")
+    st.error("⚠️ CRITICAL ERROR: API Key is missing in Streamlit Secrets.")
     st.stop()
 
 genai.configure(api_key=api_key)
 
-# --- APP HEADER ---
-st.title("📊 CibilPro.ai Report Analyzer")
-st.write("Upload your PDF to see the full problems, solutions, and score analysis.")
+# --- HEADER (LOOK FOR THE V3.0 TAG) ---
+st.title("📊 CibilPro Analyzer (v3.0)")
+st.caption("If you see 'v3.0', the update worked!")
 
 # --- FILE UPLOADER ---
-uploaded_file = st.file_uploader("Upload CIBIL Report (PDF)", type="pdf")
+uploaded_file = st.file_uploader("Upload CIBIL PDF", type="pdf")
 
 # --- MAIN LOGIC ---
-if uploaded_file is not None:
+if uploaded_file:
     # 1. READ PDF
     try:
         with pdfplumber.open(uploaded_file) as pdf:
@@ -46,75 +57,62 @@ if uploaded_file is not None:
             for page in pdf.pages:
                 text += page.extract_text() or ""
     except Exception as e:
-        st.error(f"Error reading PDF: {e}")
+        st.error(f"❌ Error reading PDF: {e}")
         st.stop()
 
-    # 2. ANALYZE WITH AI (Only runs once per file)
-    # We use a unique key for session state based on filename to avoid re-running
-    if "analysis_result" not in st.session_state or st.session_state.current_file != uploaded_file.name:
+    # 2. RUN AI (Only if not already in memory)
+    # We use a unique key combining filename and 'v3' to force a fresh check
+    state_key = f"analysis_v3_{uploaded_file.name}"
+    
+    if state_key not in st.session_state:
+        status_box = st.info("🤖 AI is reading your report... Please wait...")
+        try:
+            prompt = f"""
+            You are a Credit Expert. Analyze this CIBIL report.
+            REPORT TEXT: {text[:25000]}
+            
+            OUTPUT FORMAT (Markdown):
+            # 🚦 VERDICT: [SAFE / RISKY]
+            
+            ## 🚩 CRITICAL PROBLEMS
+            * List specific accounts (Bank Name, Amount) that are 'Suit Filed', 'Written Off', or Overdue.
+            
+            ## 🛠️ RECOVERY STEPS
+            1. [Immediate Action]
+            2. [Short Term Plan]
+            
+            ## 📈 SCORE PREDICTION
+            * Estimated Increase: +[Points]
+            * Timeline: [Months]
+            """
+            
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(prompt)
+            
+            # Save result to memory
+            st.session_state[state_key] = response.text
+            status_box.empty() # Remove loading message
+            
+        except Exception as e:
+            st.error(f"AI Connection Error: {e}")
+            st.stop()
+
+    # 3. SHOW RESULTS (Always runs if state exists)
+    if state_key in st.session_state:
+        report_content = st.session_state[state_key]
         
-        with st.spinner("🤖 AI is analyzing 200+ credit factors... (Wait 10s)"):
-            try:
-                # The Prompt
-                prompt = f"""
-                You are a Senior Credit Officer. Analyze this CIBIL report.
-                
-                REPORT DATA: 
-                {text[:20000]}
-
-                OUTPUT INSTRUCTIONS:
-                Provide a detailed Markdown report.
-                
-                Structure:
-                ## 1. 🚦 Executive Summary
-                * **Estimated Score:** (Extract or Estimate)
-                * **Verdict:** (Safe / Caution / Risk)
-                
-                ## 2. 🚩 Critical Issues (The "Why")
-                * List exactly which accounts are overdue, written off, or suit filed.
-                * Show the bank name and amount for each.
-
-                ## 3. 🛠️ Step-by-Step Fix Plan
-                * **Immediate Action:** What to pay today.
-                * **Dispute Strategy:** If any errors exist.
-                * **Wait Period:** How long until score increases.
-
-                ## 4. 📈 Projected Growth
-                * "If you follow this plan, your score could rise by +X points in Y months."
-                """
-                
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                response = model.generate_content(prompt)
-                
-                # Save to "Memory" (Session State)
-                st.session_state.analysis_result = response.text
-                st.session_state.current_file = uploaded_file.name
-                
-            except Exception as e:
-                st.error(f"AI Error: {e}")
-
-    # 3. DISPLAY RESULTS (This runs every time, even after clicking download)
-    if "analysis_result" in st.session_state:
-        report_text = st.session_state.analysis_result
+        st.success("✅ Analysis Complete!")
         
-        # --- DASHBOARD SECTION ---
-        st.success("Analysis Success!")
+        # DOWNLOAD BUTTON (Top priority placement)
+        st.download_button(
+            label="📥 DOWNLOAD FULL REPORT NOW",
+            data=report_content,
+            file_name="CibilPro_Analysis.md",
+            mime="text/markdown"
+        )
         
-        col1, col2 = st.columns(2)
-        with col1:
-            st.info("👇 **Scroll Down for Full Report**")
-        with col2:
-            # --- THE WORKING DOWNLOAD BUTTON ---
-            # Using data=report_text from session state fixes the "Stuck" issue
-            st.download_button(
-                label="📥 Download Full Report",
-                data=report_text,
-                file_name=f"Cibil_Analysis_{datetime.now().strftime('%Y%m%d')}.md",
-                mime="text/markdown"
-            )
-
-        st.divider()
-        
-        # --- FULL REPORT DISPLAY ---
-        st.markdown("### 📝 Detailed Analysis")
-        st.markdown(report_text)
+        st.markdown("---")
+        st.markdown("### 📝 Full Report Preview:")
+        # Use a container to ensure text wraps correctly
+        with st.container():
+            st.markdown(report_content)
