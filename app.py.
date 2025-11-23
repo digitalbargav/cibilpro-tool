@@ -1,0 +1,77 @@
+import streamlit as st
+import google.generativeai as genai
+import pdfplumber
+
+# 1. Setup Page Config (Clean look)
+st.set_page_config(page_title="CibilPro Analyst", layout="wide")
+
+# 2. Hide Streamlit Menu (So it looks like YOUR website)
+st.markdown("""
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    </style>
+    """, unsafe_allow_html=True)
+
+# 3. Get API Key securely
+api_key = st.secrets.get("GEMINI_KEY")
+if not api_key:
+    st.error("⚠️ Server Error: API Key missing. Please contact admin.")
+    st.stop()
+
+genai.configure(api_key=api_key)
+
+# 4. The Interface
+st.title("📊 Free CIBIL Report Analyzer")
+st.markdown("Upload your PDF report below. AI will analyze it for **Suit Filed** cases, negative accounts, and provide a score recovery plan.")
+
+uploaded_file = st.file_uploader("Choose your CIBIL PDF", type="pdf")
+
+if uploaded_file is not None:
+    with st.spinner("🔍 AI is reading your report (this takes 10 seconds)..."):
+        try:
+            # Extract Text using pdfplumber (Best for tables)
+            full_text = ""
+            with pdfplumber.open(uploaded_file) as pdf:
+                for page in pdf.pages:
+                    full_text += page.extract_text() or ""
+
+            # 5. The Expert Prompt
+            prompt = f"""
+            You are a Senior Credit Repair Expert. Analyze this CIBIL report text deeply.
+            
+            REPORT TEXT:
+            {full_text[:15000]}
+            
+            YOUR TASK:
+            Output the analysis in this exact structured format:
+
+            ### 1. 🚦 The Verdict
+            * **Status:** [Safe / Caution / High Risk]
+            * **Summary:** [2 sentences explaining why]
+
+            ### 2. 🚩 Critical Problems Found
+            * List EVERY account with "Suit Filed", "Written Off", "Settled", or DPD > 0.
+            * Format: **Bank Name** - ₹[Amount] - [Status]
+
+            ### 3. 🛠️ Recovery Action Plan
+            * **Step 1 (Immediate):** [What to pay first]
+            * **Step 2 (Next 3 Months):** [What to close/settle]
+            * **Step 3 (Habits):** [What not to do]
+
+            ### 4. 📈 Score Projection
+            * **Estimated Score Increase:** +[Number] points
+            * **Time Required:** [Number] Months
+            * **Condition:** [e.g., "Only if Suit Filed account is closed"]
+            """
+
+            # Get AI Response
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(prompt)
+            
+            st.success("Analysis Complete!")
+            st.markdown(response.text)
+            
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
